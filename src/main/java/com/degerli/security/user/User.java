@@ -23,6 +23,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 @AllArgsConstructor
 @Entity
 @Table(name = "_user")
+// since user table is being used by postgresql, we are using _user as table name of our entity
 public class User implements UserDetails {
 
   @Id

@@ -7,6 +7,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+    # this will create a new table each time when the program runs and drop when the program stops
     show-sql: false
     properties:
       hibernate:
