@@ -1,5 +1,5 @@
-# Use the official OpenJDK 17 image as the base image
-FROM openjdk:17-jdk-slim
+# Use a stable OpenJDK 17 image (eclipse-temurin is the recommended replacement for openjdk)
+FROM eclipse-temurin:17-jdk-jammy
 
 # Set the working directory inside the container
 WORKDIR /app
