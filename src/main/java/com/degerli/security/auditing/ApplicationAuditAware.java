@@ -1,5 +1,6 @@
 package com.degerli.security.auditing;
 
+import com.degerli.security.config.ApplicationConfig;
 import com.degerli.security.user.User;
 import java.util.Optional;
 import org.springframework.data.domain.AuditorAware;
