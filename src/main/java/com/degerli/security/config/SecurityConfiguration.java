@@ -307,7 +307,11 @@ public class SecurityConfiguration {
             .logoutSuccessHandler(
                 (request, response, authentication) -> SecurityContextHolder.clearContext()));
 
-    // SecurityFilterChain build et ve döndür
-    return http.build();
+    SecurityFilterChain filterChain = http.build();
+    System.out.println("=== SECURITY FILTER CHAIN ===");
+    filterChain.getFilters()
+        .forEach(filter -> System.out.println(filter.getClass().getSimpleName()));
+
+    return filterChain;
   }
 }

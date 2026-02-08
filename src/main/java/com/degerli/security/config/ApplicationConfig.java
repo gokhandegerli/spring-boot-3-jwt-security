@@ -184,6 +184,15 @@ public class ApplicationConfig {
         .orElseThrow(() -> new UsernameNotFoundException("User not found"));
   }
 
+  // 3️⃣ Yukarıdaki lambda aslında AYNI ŞEY (UZUN YOL)
+  /*return new UserDetailsService() {
+      @Override
+      public UserDetails loadUserByUsername(String username) {
+        return userRepository.findByEmail(username)
+            .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+      }
+    };*/
+
   /**
    * AuthenticationProvider Bean
    *
