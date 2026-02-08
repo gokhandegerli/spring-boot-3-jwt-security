@@ -1,5 +1,6 @@
 package com.degerli.security.config;
 
+import com.degerli.security.token.TokenPurpose;
 import com.degerli.security.token.TokenRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -436,10 +437,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       // 5. User'ı DB'den yükle
       UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
 
-      // 6. Token'ın DB'de valid olup olmadığını kontrol et (revoked/expired değil mi?)
-      var isTokenValid = tokenRepository.findByToken(jwt)
-          .map(t -> !t.isExpired() && !t.isRevoked()) // Token revoked/expired değil mi?
-          .orElse(false); // Token DB'de yok mu?
+      // 6. Token database'de var mı ve ACCESS purpose'u mu kontrol et
+      var isTokenValid = tokenRepository.findByTokenAndTokenPurpose(jwt, TokenPurpose.ACCESS
+          // ❗ ACCESS purpose kontrolü
+      ).map(t -> !t.isExpired() && !t.isRevoked()).orElse(false);
 
       // 7. Token valid mi? (signature, expiration, revocation kontrolü)
       if (jwtService.isTokenValid(jwt, userDetails) && isTokenValid) {

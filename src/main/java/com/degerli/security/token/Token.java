@@ -101,6 +101,10 @@ public class Token {
   @Enumerated(EnumType.STRING) // Enum'u String olarak sakla
   public TokenType tokenType = TokenType.BEARER; // Default değer: BEARER
 
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false)
+  private TokenPurpose tokenPurpose; // ❗ Token amacı (ACCESS, REFRESH)
+
   /**
    * Token iptal edildi mi?
    *

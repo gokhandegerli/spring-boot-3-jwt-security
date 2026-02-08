@@ -1,4 +1,18 @@
+**TAMAM BAŞKAN!** 🔥 Son duruma göre README'yi güncelliyorum!
 
+**Eklenecek kısımlar:**
+1. ✅ **TokenPurpose enum'u** (ACCESS, REFRESH)
+2. ✅ **Token yapısındaki refactoring** (TokenType + TokenPurpose)
+3. ✅ **revokeAllUserTokensByPurpose method'u**
+4. ✅ **Refresh token akışındaki iyileştirme** (sadece ACCESS token'lar revoke ediliyor)
+
+---
+
+İşte **kopyala/yapıştır** yapabileceğin **final README.md**:
+
+---
+
+```markdown
 # 🔐 Spring Boot 3.0 Security with JWT Implementation
 
 Bu proje, **Spring Boot 3.0** ve **JSON Web Tokens (JWT)** kullanarak modern, stateless authentication ve authorization sisteminin nasıl implement edileceğini gösterir.
@@ -30,6 +44,7 @@ Bu proje, **Spring Boot 3.0** ve **JSON Web Tokens (JWT)** kullanarak modern, st
 - ✅ **JWT Access Token** - Stateless authentication için JWT token
 - ✅ **JWT Refresh Token** - Access token yenilemek için refresh token
 - ✅ **Token Revocation** - Logout ile token iptal etme
+- ✅ **Granular Token Management** - ACCESS ve REFRESH token'ları ayrı ayrı yönetme
 - ✅ **Custom Access Denied Handling** - Özelleştirilmiş 403 Forbidden response
 - ✅ **Swagger/OpenAPI Documentation** - API dokümantasyonu
 
@@ -171,9 +186,9 @@ Client                          Server
   |                               |
   |                               | 1. Password'ü BCrypt ile hashle
   |                               | 2. User'ı DB'ye kaydet
-  |                               | 3. JWT access token oluştur
-  |                               | 4. JWT refresh token oluştur
-  |                               | 5. Token'ları DB'ye kaydet
+  |                               | 3. JWT access token oluştur (ACCESS purpose)
+  |                               | 4. JWT refresh token oluştur (REFRESH purpose)
+  |                               | 5. Token'ları DB'ye kaydet (ayrı ayrı)
   |                               |
   |  { access_token, refresh_token }
   |<------------------------------|
@@ -192,10 +207,10 @@ Client                          Server
   |                               | 1. User'ı DB'den bul (email)
   |                               | 2. Password'ü BCrypt ile kontrol et
   |                               | 3. AuthenticationManager.authenticate()
-  |                               | 4. JWT access token oluştur
-  |                               | 5. JWT refresh token oluştur
-  |                               | 6. Eski token'ları revoke et
-  |                               | 7. Yeni token'ları DB'ye kaydet
+  |                               | 4. JWT access token oluştur (ACCESS purpose)
+  |                               | 5. JWT refresh token oluştur (REFRESH purpose)
+  |                               | 6. Eski TÜM token'ları revoke et (ACCESS + REFRESH)
+  |                               | 7. Yeni token'ları DB'ye kaydet (ayrı ayrı)
   |                               |
   |  { access_token, refresh_token }
   |<------------------------------|
@@ -219,6 +234,7 @@ Client                          Server
   |                               |    - Signature valid mi?
   |                               |    - Expired değil mi?
   |                               |    - Revoked değil mi?
+  |                               |    - TokenPurpose ACCESS mi?
   |                               | 5. SecurityContext'e Authentication set et
   |                               |
   |                               | FilterSecurityInterceptor:
@@ -240,13 +256,15 @@ Client                          Server
   |------------------------------>|
   |                               |
   |                               | 1. Refresh token'ı validate et
-  |                               | 2. User'ı DB'den yükle
-  |                               | 3. Yeni access token oluştur
-  |                               | 4. Yeni refresh token oluştur
-  |                               | 5. Eski token'ları revoke et
-  |                               | 6. Yeni token'ları DB'ye kaydet
+  |                               | 2. TokenPurpose REFRESH mi kontrol et
+  |                               | 3. User'ı DB'den yükle
+  |                               | 4. Yeni access token oluştur (ACCESS purpose)
+  |                               | 5. Sadece eski ACCESS token'ları revoke et
+  |                               |    (REFRESH token korunur!)
+  |                               | 6. Yeni access token'ı DB'ye kaydet
   |                               |
   |  { access_token, refresh_token }
+  |  (refresh_token aynı kalır)   |
   |<------------------------------|
   |                               |
 ```
@@ -313,10 +331,15 @@ Client                          Server
 │  │ Entity       │  │ Entity       │  │ Entity       │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 │                                                               │
-│  ┌──────────────┐  ┌──────────────┐                         │
-│  │ Role         │  │ Permission   │                         │
-│  │ Enum         │  │ Enum         │                         │
-│  └──────────────┘  └──────────────┘                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │ Role         │  │ Permission   │  │ TokenType    │      │
+│  │ Enum         │  │ Enum         │  │ Enum         │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│                                                               │
+│  ┌──────────────┐                                            │
+│  │ TokenPurpose │                                            │
+│  │ Enum         │                                            │
+│  └──────────────┘                                            │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -371,6 +394,7 @@ com.degerli.security
 ├── token/                           # Token Domain
 │   ├── Token.java                   # Token entity (JWT token storage)
 │   ├── TokenType.java               # Token type enum (BEARER)
+│   ├── TokenPurpose.java            # Token purpose enum (ACCESS, REFRESH)
 │   └── TokenRepository.java         # Token data access
 │
 ├── auth/                            # Authentication Domain
@@ -412,19 +436,23 @@ Projeyi anlamak için **aşağıdaki sırayı** takip etmenizi öneririm:
 2. `Role.java` - Rol enum'u (ADMIN, MANAGER, USER)
 3. `Permission.java` - Permission enum'u (granular permissions)
 4. `Token.java` - JWT token entity'si
-5. `TokenType.java` - Token type enum'u
+5. `TokenType.java` - Token type enum'u (BEARER)
+6. `TokenPurpose.java` - Token purpose enum'u (ACCESS, REFRESH)
 
 **Dikkat Edilmesi Gerekenler:**
 - ✅ `User` class'ı `UserDetails` interface'ini implement ediyor (Spring Security requirement)
 - ✅ `getAuthorities()` method'u role ve permission'ları `GrantedAuthority` listesine dönüştürüyor
 - ✅ `Role` enum'u içinde `permissions` listesi var (role → permissions mapping)
 - ✅ `Token` entity'si `user` ile `@ManyToOne` ilişkisi var (bir user'ın birden fazla token'ı olabilir)
+- ✅ `TokenType` enum'u token tipini belirliyor (BEARER)
+- ✅ `TokenPurpose` enum'u token amacını belirliyor (ACCESS veya REFRESH)
 
 **Sorular:**
 - ❓ `UserDetails` interface'i neden gerekli?
 - ❓ `GrantedAuthority` nedir?
 - ❓ Role ve Permission arasındaki fark nedir?
 - ❓ Token neden DB'de tutuluyor?
+- ❓ TokenType ve TokenPurpose arasındaki fark nedir?
 
 ---
 
@@ -438,13 +466,16 @@ Projeyi anlamak için **aşağıdaki sırayı** takip etmenizi öneririm:
 **Dikkat Edilmesi Gerekenler:**
 - ✅ `UserRepository.findByEmail()` - Login için kullanılıyor
 - ✅ `TokenRepository.findAllValidTokenByUser()` - User'ın valid token'larını buluyor
+- ✅ `TokenRepository.findAllValidTokenByUserAndPurpose()` - User'ın belirli purpose'taki valid token'larını buluyor
 - ✅ `TokenRepository.findByToken()` - JWT token'ı validate ederken kullanılıyor
-- ⚠️ **BUG:** `findAllValidTokenByUser()` query'sinde `OR` yerine `AND` kullanılmalı!
+- ✅ `TokenRepository.findByTokenAndTokenPurpose()` - JWT token'ı purpose ile validate ederken kullanılıyor
+- ⚠️ **BUG FİX:** `findAllValidTokenByUser()` query'sinde `OR` yerine `AND` kullanılmalı!
 
 **Sorular:**
 - ❓ `Optional<User>` neden kullanılıyor?
 - ❓ `@Query` annotation'ı ne işe yarıyor?
 - ❓ Token revocation nasıl çalışıyor?
+- ❓ TokenPurpose ile token filtreleme neden gerekli?
 
 ---
 
@@ -512,11 +543,12 @@ Projeyi anlamak için **aşağıdaki sırayı** takip etmenizi öneririm:
 - ⚠️ **DEPRECATED:** `SignatureAlgorithm.HS256` yerine `HS512` kullanılmalı!
 
 #### **AuthenticationService.java:**
-- ✅ `register()` - User kaydı + token generation
-- ✅ `authenticate()` - Login + token generation
-- ✅ `refreshToken()` - Refresh token ile yeni token alma
-- ✅ `saveUserToken()` - Token'ı DB'ye kaydetme
-- ✅ `revokeAllUserTokens()` - User'ın tüm token'larını revoke etme
+- ✅ `register()` - User kaydı + token generation (ACCESS + REFRESH)
+- ✅ `authenticate()` - Login + token generation (ACCESS + REFRESH)
+- ✅ `refreshToken()` - Refresh token ile yeni access token alma
+- ✅ `saveUserToken()` - Token'ı DB'ye kaydetme (TokenPurpose ile)
+- ✅ `revokeAllUserTokens()` - User'ın tüm token'larını revoke etme (ACCESS + REFRESH)
+- ✅ `revokeAllUserTokensByPurpose()` - User'ın belirli purpose'taki token'larını revoke etme (sadece ACCESS veya sadece REFRESH)
 
 #### **UserService.java:**
 - ✅ `changePassword()` - Password değiştirme
@@ -528,6 +560,7 @@ Projeyi anlamak için **aşağıdaki sırayı** takip etmenizi öneririm:
 - ❓ Access token ve refresh token arasındaki fark nedir?
 - ❓ Token revocation neden gerekli?
 - ❓ BCrypt neden kullanılıyor?
+- ❓ Refresh token sırasında neden sadece ACCESS token'lar revoke ediliyor?
 
 ---
 
@@ -572,7 +605,7 @@ Projeyi anlamak için **aşağıdaki sırayı** takip etmenizi öneririm:
 1. ✅ User registration yap
 2. ✅ Login yap (access token + refresh token al)
 3. ✅ Protected endpoint'e request at (JWT token ile)
-4. ✅ Refresh token ile yeni access token al
+4. ✅ Refresh token ile yeni access token al (refresh token aynı kalır, sadece access token yenilenir)
 5. ✅ Logout yap (token revoke et)
 6. ✅ Revoked token ile request at (403 Forbidden almalısın)
 
@@ -705,10 +738,12 @@ curl -X POST http://localhost:8080/api/v1/auth/refresh-token \
 **Response:**
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... (YENİ)",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... (AYNI)"
 }
 ```
+
+**Not:** Refresh token aynı kalır, sadece access token yenilenir!
 
 ---
 
@@ -877,12 +912,13 @@ curl -X GET http://localhost:8080/api/v1/admin \
 
 ### **🔵 Dokümantasyon:**
 - [x] Comprehensive README.md
+- [x] TokenPurpose enum dokümantasyonu
+- [x] Granular token management dokümantasyonu
 - [ ] Postman collection ekle
 - [ ] Architecture diagram ekle
 - [ ] Sequence diagram ekle (authentication flow)
 - [ ] API documentation (Swagger) customize et
 
----
 
 ## 📚 Kaynaklar
 
@@ -901,23 +937,10 @@ curl -X GET http://localhost:8080/api/v1/admin \
 - [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
 - [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
 
----
 
 
 Bu proje, Spring Security ve JWT authentication'ı öğrenmek isteyenler için bir başlangıç noktasıdır. Production'da kullanmadan önce yukarıdaki güvenlik notlarını ve TODO listesini mutlaka inceleyin!
 
 **Happy Coding! 🚀**
 ```
-
----
-
-Bu README:
-
-1. ✅ **Spring Security felsefesini** detaylı açıklıyor
-2. ✅ **JWT authentication flow**'unu adım adım gösteriyor
-3. ✅ **Proje mimarisini** görsel olarak sunuyor
-4. ✅ **Öğrenme yol haritası** veriyor (hangi sırayla okunmalı)
-5. ✅ **Her layer için dikkat edilmesi gerekenleri** belirtiyor
-6. ✅ **API endpoint'leri** ve **örnek kullanımları** gösteriyor
-7. ✅ **Güvenlik notlarını** ve **TODO listesini** içeriyor
-
+🚀

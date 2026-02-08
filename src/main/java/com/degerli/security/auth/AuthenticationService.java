@@ -2,6 +2,7 @@ package com.degerli.security.auth;
 
 import com.degerli.security.config.JwtService;
 import com.degerli.security.token.Token;
+import com.degerli.security.token.TokenPurpose;
 import com.degerli.security.token.TokenRepository;
 import com.degerli.security.token.TokenType;
 import com.degerli.security.user.User;
@@ -178,7 +179,7 @@ public class AuthenticationService {
    * @return JWT token'ları içeren response (access token + refresh token)
    * @see RegisterRequest Kayıt request DTO'su
    * @see AuthenticationResponse Token response DTO'su
-   * @see #saveUserToken(User, String) Token'ı DB'ye kaydeden method
+   * @see #saveUserToken(User, String, TokenPurpose) Token'ı DB'ye kaydeden method
    */
   public AuthenticationResponse register(RegisterRequest request) {
     // 1. RegisterRequest'ten User entity oluştur
@@ -198,8 +199,9 @@ public class AuthenticationService {
     // 4. Refresh token oluştur (7 gün geçerli)
     var refreshToken = jwtService.generateRefreshToken(user);
 
-    // 5. Access token'ı DB'ye kaydet
-    saveUserToken(savedUser, jwtToken);
+    // 3. Her iki token'ı da kaydet
+    saveUserToken(savedUser, jwtToken, TokenPurpose.ACCESS); // ❗ ACCESS purpose
+    saveUserToken(savedUser, refreshToken, TokenPurpose.REFRESH); // ❗ REFRESH purpose
 
     // 6. Token'ları döner
     return AuthenticationResponse.builder()
@@ -272,7 +274,7 @@ public class AuthenticationService {
    * @param request Login bilgileri (email, password)
    * @return JWT token'ları içeren response (access token + refresh token)
    * @throws org.springframework.security.authentication.BadCredentialsException Email veya
-   * şifre yanlış
+   *                                                                             şifre yanlış
    * @see AuthenticationRequest Login request DTO'su
    * @see AuthenticationResponse Token response DTO'su
    * @see #revokeAllUserTokens(User) Eski token'ları revoke eden method
@@ -300,8 +302,9 @@ public class AuthenticationService {
     // 5. Kullanıcının eski token'larını revoke et (tek aktif session)
     revokeAllUserTokens(user);
 
-    // 6. Yeni access token'ı DB'ye kaydet
-    saveUserToken(user, jwtToken);
+    // 5. Yeni token'ları kaydet
+    saveUserToken(user, jwtToken, TokenPurpose.ACCESS); // ❗ ACCESS purpose
+    saveUserToken(user, refreshToken, TokenPurpose.REFRESH); // ❗ REFRESH purpose
 
     // 7. Token'ları döner
     return AuthenticationResponse.builder()
@@ -341,16 +344,19 @@ public class AuthenticationService {
    * - refreshToken(): Refresh sonrası yeni token kaydetme
    * </p>
    *
-   * @param user     Token'ın sahibi olan kullanıcı
-   * @param jwtToken JWT token string'i
+   * @param user         Token'ın sahibi olan kullanıcı
+   * @param jwtToken     JWT token string'i
+   * @param tokenPurpose Token amacı (ACCESS veya REFRESH)
    * @see Token Token entity'si
    * @see TokenType Token tipi enum'u
    */
-  private void saveUserToken(User user, String jwtToken) {
+  private void saveUserToken(User user, String jwtToken, TokenPurpose tokenPurpose) {
     // 1. Token entity oluştur
-    var token = Token.builder().user(user)                      // Token'ın sahibi
+    var token = Token.builder()
+        .user(user)                      // Token'ın sahibi
         .token(jwtToken)                 // JWT token string'i
-        .tokenType(TokenType.BEARER)     // Token tipi: BEARER
+        .tokenType(TokenType.BEARER)    // Token tipi: BEARER
+        .tokenPurpose(tokenPurpose)
         .expired(false)                  // Yeni token, expire olmamış
         .revoked(false)                  // Yeni token, revoke edilmemiş
         .build();
@@ -419,6 +425,23 @@ public class AuthenticationService {
     });
 
     // 4. Tüm token'ları DB'ye kaydet (bulk update)
+    tokenRepository.saveAll(validUserTokens);
+  }
+
+  /**
+   * Kullanıcının belirli amaçtaki tüm geçerli token'larını revoke eder
+   */
+
+  private void revokeAllUserTokensByPurpose(User user, TokenPurpose tokenPurpose) {
+    var validUserTokens = tokenRepository.findAllValidTokenByUserAndPurpose(user.getId(),
+        tokenPurpose);
+    if (validUserTokens.isEmpty()) {
+      return;
+    }
+    validUserTokens.forEach(token -> {
+      token.setExpired(true);
+      token.setRevoked(true);
+    });
     tokenRepository.saveAll(validUserTokens);
   }
 
@@ -524,14 +547,27 @@ public class AuthenticationService {
 
       // 7. Refresh token validate et (expire olmamış mı, user'a ait mi)
       if (jwtService.isTokenValid(refreshToken, user)) {
+
+        // 5. Refresh token database'de var mı ve REFRESH purpose'u mu kontrol et
+        var storedToken = tokenRepository.findByTokenAndTokenPurpose(refreshToken,
+            TokenPurpose.REFRESH // ❗ REFRESH purpose kontrolü
+        );
+
+        if (storedToken.isEmpty() || storedToken.get().isRevoked() || storedToken.get()
+            .isExpired()) {
+          // ❗ Refresh token geçersiz
+          response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+          return;
+        }
+
         // 8. Yeni access token oluştur
         var accessToken = jwtService.generateToken(user);
 
-        // 9. Kullanıcının eski token'larını revoke et
-        revokeAllUserTokens(user);
+        // 9. Sadece eski ACCESS token'ları revoke et
+        revokeAllUserTokensByPurpose(user, TokenPurpose.ACCESS); // ❗ ACCESS purpose
 
-        // 10. Yeni access token'ı DB'ye kaydet
-        saveUserToken(user, accessToken);
+        // 10. Yeni access token'ı kaydet
+        saveUserToken(user, accessToken, TokenPurpose.ACCESS); // ❗ ACCESS purpose
 
         // 11. Response oluştur (access token + refresh token)
         var authResponse = AuthenticationResponse.builder()
