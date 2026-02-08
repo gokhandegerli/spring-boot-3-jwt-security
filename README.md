@@ -1,18 +1,3 @@
-**TAMAM BAŞKAN!** 🔥 Son duruma göre README'yi güncelliyorum!
-
-**Eklenecek kısımlar:**
-1. ✅ **TokenPurpose enum'u** (ACCESS, REFRESH)
-2. ✅ **Token yapısındaki refactoring** (TokenType + TokenPurpose)
-3. ✅ **revokeAllUserTokensByPurpose method'u**
-4. ✅ **Refresh token akışındaki iyileştirme** (sadece ACCESS token'lar revoke ediliyor)
-
----
-
-İşte **kopyala/yapıştır** yapabileceğin **final README.md**:
-
----
-
-```markdown
 # 🔐 Spring Boot 3.0 Security with JWT Implementation
 
 Bu proje, **Spring Boot 3.0** ve **JSON Web Tokens (JWT)** kullanarak modern, stateless authentication ve authorization sisteminin nasıl implement edileceğini gösterir.
@@ -942,5 +927,3 @@ curl -X GET http://localhost:8080/api/v1/admin \
 Bu proje, Spring Security ve JWT authentication'ı öğrenmek isteyenler için bir başlangıç noktasıdır. Production'da kullanmadan önce yukarıdaki güvenlik notlarını ve TODO listesini mutlaka inceleyin!
 
 **Happy Coding! 🚀**
-```
-🚀
