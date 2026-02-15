@@ -14,9 +14,10 @@ Bu proje, **Spring Boot 3.0** ve **JSON Web Tokens (JWT)** kullanarak modern, st
 6. [ApplicationConfig - Spring Security'nin Beyni](#-applicationconfig---spring-securitynin-beyni)
 7. [SecurityConfiguration - Filter Chain](#-securityconfiguration---filter-chain)
 8. [JwtAuthenticationFilter - Token Validation](#-jwtauthenticationfilter---token-validation)
-9. [Proje Mimarisi](#-proje-mimarisi)
-10. [API Endpoints](#-api-endpoints)
-11. [Güvenlik Notları](#-güvenlik-notları)
+9. [OncePerRequestFilter - Base Filter Class](#-onceperrequestfilter---base-filter-class)
+10. [Proje Mimarisi](#-proje-mimarisi)
+11. [API Endpoints](#-api-endpoints)
+12. [Güvenlik Notları](#-güvenlik-notları)
 
 ---
 
@@ -99,29 +100,78 @@ Bu proje, **Spring Boot 3.0** ve **JSON Web Tokens (JWT)** kullanarak modern, st
 
 ---
 
-### **2. Spring Security Filter Chain**
+### **2. Spring Security Filter Chain (Spring Boot 3.0+)**
 
 Spring Security, **Filter Chain** pattern'i kullanır. Her HTTP request, bir dizi filter'dan geçer:
 
 ```
 HTTP Request
     ↓
-1. SecurityContextPersistenceFilter (SecurityContext yükle)
+1. DisableEncodeUrlFilter
     ↓
-2. JwtAuthenticationFilter (JWT token validate et) ← BU PROJEDEKİ CUSTOM FILTER
+2. WebAsyncManagerIntegrationFilter
     ↓
-3. UsernamePasswordAuthenticationFilter (username/password authentication)
+3. SecurityContextHolderFilter (SecurityContext oluştur - boş)
     ↓
-4. ExceptionTranslationFilter (exception handling)
+4. HeaderWriterFilter
     ↓
-5. FilterSecurityInterceptor (authorization - role/permission kontrolü)
+5. CorsFilter
+    ↓
+6. CsrfFilter (bizde disabled)
+    ↓
+7. LogoutFilter
+    ↓
+8. JwtAuthenticationFilter ← BİZİM CUSTOM FILTER (SecurityContext'e Authentication set et)
+    ↓
+9. UsernamePasswordAuthenticationFilter (ÇALIŞMAZ - JWT kullanıyoruz)
+    ↓
+10. RequestCacheAwareFilter
+    ↓
+11. SecurityContextHolderAwareRequestFilter
+    ↓
+12. AnonymousAuthenticationFilter
+    ↓
+13. SessionManagementFilter
+    ↓
+14. ExceptionTranslationFilter (exception handling - 401/403)
+    ↓
+15. AuthorizationFilter (authorization - role/permission kontrolü)
     ↓
 Controller Method
     ↓
 HTTP Response
+    ↓
+SecurityContextHolderFilter (finally block - SecurityContext temizle)
 ```
 
-**ÖNEMLİ:** Filter sırası kritik! Authentication **önce**, authorization **sonra** yapılmalı.
+**ÖNEMLİ NOKTALAR:**
+
+1. **SecurityContextHolderFilter (Filter #3):**
+    - **Boş** bir `SecurityContext` oluşturur
+    - `SecurityContextHolder.setContext(context)` ile set eder
+    - Request sonunda `finally` block'ta temizler
+
+2. **JwtAuthenticationFilter (Filter #8):**
+    - JWT token'ı validate eder
+    - User'ı DB'den yükler
+    - `AuthenticationToken` oluşturur
+    - `SecurityContext`'e **set eder** → `SecurityContextHolder.getContext().setAuthentication(authToken)`
+
+3. **UsernamePasswordAuthenticationFilter (Filter #9):**
+    - Form-based login için kullanılır
+    - **Bizde ÇALIŞMAZ** (JWT kullanıyoruz)
+    - Sadece **referans noktası** olarak kullanılıyor (filter sırası için)
+
+4. **ExceptionTranslationFilter (Filter #14):**
+    - `AuthenticationException` → **401 Unauthorized**
+    - `AccessDeniedException` → **403 Forbidden**
+
+5. **AuthorizationFilter (Filter #15):**
+    - `SecurityContext`'ten `Authentication` alır
+    - Role/Permission kontrolü yapar
+    - Authorization başarısız ise → **403 Forbidden**
+
+**Filter sırası kritik!** Authentication **önce**, authorization **sonra** yapılmalı.
 
 ---
 
@@ -141,6 +191,24 @@ User user = (User) auth.getPrincipal();
 ```
 
 **NEDEN:** SecurityContext **thread-local** → Her thread için ayrı. Multi-threaded environment'ta güvenli!
+
+**YAŞAM DÖNGÜSÜ:**
+
+```
+Request başlangıcı
+    ↓
+SecurityContextHolderFilter: Boş SecurityContext oluştur
+    ↓
+JwtAuthenticationFilter: Authentication set et
+    ↓
+AuthorizationFilter: Authentication kullan
+    ↓
+Controller: Authentication kullan
+    ↓
+Request sonu
+    ↓
+SecurityContextHolderFilter (finally): SecurityContext temizle
+```
 
 ---
 
@@ -213,22 +281,30 @@ Client                          Server
   |  Authorization: Bearer <JWT>  |
   |------------------------------>|
   |                               |
+  |                               | SecurityContextHolderFilter:
+  |                               | 1. Boş SecurityContext oluştur
+  |                               |
   |                               | JwtAuthenticationFilter:
-  |                               | 1. Authorization header'dan JWT al
-  |                               | 2. JWT'den username (email) çıkar
-  |                               | 3. User'ı DB'den yükle
-  |                               | 4. Token'ı validate et:
+  |                               | 2. Authorization header'dan JWT al
+  |                               | 3. JWT'den username (email) çıkar
+  |                               | 4. User'ı DB'den yükle
+  |                               | 5. Token'ı validate et:
   |                               |    - Signature valid mi?
   |                               |    - Expired değil mi?
   |                               |    - Revoked değil mi?
-  |                               | 5. SecurityContext'e Authentication set et
+  |                               | 6. AuthenticationToken oluştur
+  |                               | 7. SecurityContext'e Authentication set et
   |                               |
-  |                               | FilterSecurityInterceptor:
-  |                               | 6. Role/Permission kontrolü yap
-  |                               | 7. Controller method'u çağır
+  |                               | AuthorizationFilter:
+  |                               | 8. SecurityContext'ten Authentication al
+  |                               | 9. Role/Permission kontrolü yap
+  |                               | 10. Controller method'u çağır
   |                               |
   |  [ { book1 }, { book2 }, ... ] |
   |<------------------------------|
+  |                               |
+  |                               | SecurityContextHolderFilter (finally):
+  |                               | 11. SecurityContext temizle
 ```
 
 ---
@@ -323,6 +399,10 @@ return username -> userRepository.findByEmail(username)
 
 #### **BU BEAN NE ZAMAN KULLANILIYOR?**
 
+**2 FARKLI YERDE:**
+
+**1. Login sırasında (AuthenticationManager):**
+
 ```java
 // SENARYO: Client login request gönderiyor
 POST /api/v1/auth/authenticate
@@ -337,6 +417,30 @@ UserDetails user = userDetailsService.loadUserByUsername("gokhan@example.com");
 
 // 4. User entity'si UserDetails interface'ini implement ediyor
 public class User implements UserDetails { ... }
+```
+
+**2. Her authenticated request'te (JwtAuthenticationFilter):**
+
+```java
+// SENARYO: Client JWT token ile request gönderiyor
+GET /api/v1/books
+Authorization: Bearer eyJhbGc...
+
+// JwtAuthenticationFilter içinde:
+String userEmail = jwtService.extractUsername(jwt); // "gokhan@example.com"
+
+// UserDetailsService çağrılır:
+UserDetails userDetails = userDetailsService.loadUserByUsername(userEmail);
+
+// AuthenticationToken oluştur
+UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+    userDetails,
+    null,
+    userDetails.getAuthorities()
+);
+
+// SecurityContext'e set et
+SecurityContextHolder.getContext().setAuthentication(authToken);
 ```
 
 ---
@@ -494,11 +598,13 @@ public class ProviderManager implements AuthenticationManager {
 
 #### **KULLANIM:**
 
+**ÖNEMLİ:** `AuthenticationManager` **sadece login sırasında** kullanılıyor! Filter chain'de **YOK**.
+
 ```java
 // AuthenticationService içinde
 public AuthenticationResponse authenticate(AuthenticationRequest request) {
   
-  // AuthenticationManager'a authentication yaptır
+  // AuthenticationManager'a authentication yaptır (SADECE LOGIN SIRASINDA!)
   authenticationManager.authenticate(
       new UsernamePasswordAuthenticationToken(
           request.getEmail(),
@@ -530,7 +636,11 @@ POST /api/v1/auth/authenticate
     ↓
 AuthenticationController
     ↓
-AuthenticationManager.authenticate()
+AuthenticationService.authenticate()
+    ↓
+AuthenticationManager.authenticate() ← SADECE LOGIN SIRASINDA!
+    ↓
+ProviderManager (provider'ları koordine eder)
     ↓
 DaoAuthenticationProvider.authenticate()
     ├─> UserDetailsService.loadUserByUsername("gokhan@example.com")
@@ -548,8 +658,10 @@ DaoAuthenticationProvider.authenticate()
               authorities: ["ROLE_USER", "user:read", "user:write"]
             }
     ↓
-AuthenticationController
+AuthenticationService
     ├─> JWT token oluştur
+    ├─> Eski token'ları revoke et
+    ├─> Yeni token'ları DB'ye kaydet
     └─> Response döndür
     ↓
 { "access_token": "eyJhbGc...", "refresh_token": "eyJhbGc..." }
@@ -563,11 +675,77 @@ AuthenticationController
 
 | Özellik | Authentication Token | JWT Token |
 |---------|---------------------|-----------|
-| **Tip** | `UsernamePasswordAuthenticationToken` | `String` (encoded) |
+| **Tip** | `UsernamePasswordAuthenticationToken` (Java object) | `String` (encoded) |
 | **Nerede?** | Backend (SecurityContext) | Client + Backend |
 | **Amaç** | Spring Security internal state | Client-Server communication |
-| **Ömür** | Request scope | Expiration time (örn: 24 saat) |
+| **İçerik** | User object + Authorities (FULL) | Username + Expiration (MINIMAL) |
+| **Ömür** | Request scope (request bitince temizlenir) | Expiration time (örn: 24 saat) |
 | **Client'a gönderilir mi?** | ❌ HAYIR | ✅ EVET |
+
+#### **AuthenticationToken İçeriği:**
+
+```java
+UsernamePasswordAuthenticationToken authToken = {
+  principal: User {
+    id: 1,
+    email: "gokhan@example.com",
+    password: "$2a$10$...",
+    role: ADMIN,
+    permissions: ["admin:read", "admin:write", ...]
+  },
+  credentials: null,
+  authorities: [
+    SimpleGrantedAuthority("ROLE_ADMIN"),
+    SimpleGrantedAuthority("admin:read"),
+    SimpleGrantedAuthority("admin:write"),
+    ...
+  ]
+}
+```
+
+#### **JWT Token İçeriği:**
+
+```java
+// JWT token (decoded):
+{
+  "sub": "gokhan@example.com",  // Subject (username/email)
+  "iat": 1609459200,             // Issued at (timestamp)
+  "exp": 1609545600              // Expiration (timestamp)
+}
+```
+
+**NEDEN FARKLI?**
+
+- ✅ **JWT Token:** Client'a gönderilir → **Minimal** bilgi (sadece username + expiration)
+- ✅ **AuthenticationToken:** Backend'de kullanılır → **Full** bilgi (user object + authorities)
+
+#### **AKIŞ:**
+
+```
+1. Client login yapar
+   ↓
+2. Server JWT token oluşturur (minimal bilgi: username + expiration)
+   ↓
+3. Client JWT token'ı alır (localStorage'a kaydeder)
+   ↓
+4. Client her request'te JWT token'ı gönderir
+   ↓
+5. JwtAuthenticationFilter JWT token'ı validate eder
+   ↓
+6. JWT'den username çıkarır
+   ↓
+7. User'ı DB'den yükler (FULL bilgi)
+   ↓
+8. AuthenticationToken oluşturur (User object + Authorities)
+   ↓
+9. SecurityContext'e set eder
+   ↓
+10. AuthorizationFilter authorization yapar (AuthenticationToken'daki authorities'i kontrol eder)
+   ↓
+11. Controller çalışır
+   ↓
+12. Request bitince SecurityContext temizlenir (AuthenticationToken silinir)
+```
 
 ---
 
@@ -657,7 +835,9 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Excepti
 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
 ```
 
-**NEDEN:** JWT filter **önce** çalışmalı, sonra Spring Security'nin default filter'ları çalışmalı!
+**NEDEN:** JWT filter **önce** çalışmalı!
+
+**ÖNEMLİ:** `UsernamePasswordAuthenticationFilter` **çalışmıyor** (JWT kullanıyoruz), ama filter chain'de **referans noktası** olarak kullanılıyor.
 
 ---
 
@@ -726,6 +906,57 @@ protected void doFilterInternal(
 2. ✅ **Expired değil mi?** → JWT expiration claim
 3. ✅ **Revoked değil mi?** → DB'de `revoked=false`
 4. ✅ **User mevcut mu?** → `userDetailsService.loadUserByUsername()`
+
+---
+
+## 🔧 OncePerRequestFilter - Base Filter Class
+
+`JwtAuthenticationFilter`, `OncePerRequestFilter`'ı extend ediyor. Bu **abstract class**, Spring'in **base filter class'ı**.
+
+### **OncePerRequestFilter NE YAPIYOR?**
+
+```java
+public abstract class OncePerRequestFilter extends GenericFilterBean {
+  
+  public final void doFilter(ServletRequest request, ServletResponse response, FilterChain filterChain) {
+    
+    // 1. Bu filter daha önce çalıştı mı? (aynı request'te 2 kez çalışmasın)
+    String alreadyFilteredAttributeName = this.getAlreadyFilteredAttributeName();
+    boolean hasAlreadyFilteredAttribute = request.getAttribute(alreadyFilteredAttributeName) != null;
+    
+    // 2. Skip kontrolü (async dispatch, error dispatch, vb.)
+    if (!this.skipDispatch(httpRequest) && !this.shouldNotFilter(httpRequest)) {
+      
+      if (hasAlreadyFilteredAttribute) {
+        // Daha önce çalıştı, skip et
+        filterChain.doFilter(request, response);
+      } else {
+        // İlk kez çalışıyor
+        request.setAttribute(alreadyFilteredAttributeName, Boolean.TRUE); // İşaretle
+        
+        try {
+          this.doFilterInternal(httpRequest, httpResponse, filterChain); // ← BİZİM OVERRIDE ETTİĞİMİZ METHOD
+        } finally {
+          request.removeAttribute(alreadyFilteredAttributeName); // Temizle
+        }
+      }
+    } else {
+      // Skip et
+      filterChain.doFilter(request, response);
+    }
+  }
+  
+  // BİZİM OVERRIDE ETTİĞİMİZ METHOD
+  protected abstract void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain);
+}
+```
+
+### **ÖNEMLİ NOKTALAR:**
+
+1. **doFilter() method'u FINAL** → Override edemezsin!
+2. **doFilterInternal() method'unu override ediyoruz** → Bizim custom logic
+3. **"Aynı request'te 2 kez çalışmasın" kontrolü yapıyor** → `alreadyFilteredAttributeName`
+4. **Async dispatch, error dispatch kontrolü yapıyor** → `skipDispatch()`
 
 ---
 
@@ -855,30 +1086,57 @@ com.degerli.security
 3. **PasswordEncoder** → "Şifreyi nasıl kontrol edeceksin?"
 4. **AuthenticationManager** → "Authentication işlemini kim koordine edecek?"
 
-### **Authentication Flow:**
+### **Authentication Flow (Login):**
 
 ```
 Client Request
     ↓
 AuthenticationController
     ↓
-AuthenticationManager (provider'ları koordine eder)
+AuthenticationService.authenticate()
+    ↓
+AuthenticationManager (provider'ları koordine eder) ← SADECE LOGIN SIRASINDA!
     ↓
 DaoAuthenticationProvider (authentication yapar)
     ├─> UserDetailsService (user yükle)
     ├─> PasswordEncoder (password kontrol et)
     └─> Authentication token oluştur
     ↓
-AuthenticationController
+AuthenticationService
     ├─> JWT token oluştur
+    ├─> Eski token'ları revoke et
+    ├─> Yeni token'ları DB'ye kaydet
     └─> Response döndür
+```
+
+### **Filter Chain Flow (Authenticated Request):**
+
+```
+HTTP Request
+    ↓
+SecurityContextHolderFilter (boş SecurityContext oluştur)
+    ↓
+JwtAuthenticationFilter (JWT validate et, SecurityContext'e Authentication set et)
+    ↓
+UsernamePasswordAuthenticationFilter (ÇALIŞMAZ - JWT kullanıyoruz)
+    ↓
+ExceptionTranslationFilter (exception handling - 401/403)
+    ↓
+AuthorizationFilter (authorization - role/permission kontrolü)
+    ↓
+Controller
+    ↓
+SecurityContextHolderFilter (finally - SecurityContext temizle)
 ```
 
 ### **Kritik Noktalar:**
 
-- ✅ **UserDetailsService:** Lambda expression ile implement ediyoruz
+- ✅ **UserDetailsService:** Lambda expression ile implement ediyoruz, **2 yerde kullanılıyor** (login + her request)
 - ✅ **DaoAuthenticationProvider:** Spring Security'nin default metotlarını kullanıyoruz
-- ✅ **AuthenticationManager:** Provider'ları koordine eder, kendisi authentication yapmaz
-- ✅ **Authentication Token ≠ JWT Token:** İkisi farklı şeyler!
+- ✅ **AuthenticationManager:** Provider'ları koordine eder, **sadece login sırasında** kullanılıyor
+- ✅ **Authentication Token ≠ JWT Token:** İkisi farklı şeyler! (Backend internal state vs Client-Server communication)
 - ✅ **Stateless:** Server'da session tutmuyoruz, JWT kullanıyoruz
 - ✅ **Token Revocation:** Logout sonrası token'ı DB'de revoke ediyoruz
+- ✅ **OncePerRequestFilter:** Base filter class, "aynı request'te 2 kez çalışmasın" kontrolü yapıyor
+- ✅ **SecurityContextHolderFilter:** Boş SecurityContext oluşturur, request sonunda temizler
+- ✅ **UsernamePasswordAuthenticationFilter:** Çalışmıyor, sadece referans noktası
