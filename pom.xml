@@ -9,9 +9,9 @@
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.degerli</groupId>
-	<artifactId>security</artifactId>
+	<artifactId>spring-boot-3-jwt-security</artifactId>
 	<version>0.0.1</version>
-	<name>security</name>
+	<name>spring-boot-3-jwt-security</name>
 	<description>Demo project for Spring Boot</description>
 	<properties>
 		<java.version>17</java.version>
